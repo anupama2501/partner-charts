@@ -1,27 +1,27 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  labels:
+  labels: {{- include "longhorn.labels" . | nindent 4 }}
     app: longhorn-manager
   name: longhorn-manager
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "release_namespace" . }}
 spec:
+  selector:
+    matchLabels:
+      app: longhorn-manager
   template:
     metadata:
-      labels:
+      labels: {{- include "longhorn.labels" . | nindent 8 }}
         app: longhorn-manager
+      {{- with .Values.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      initContainers:
-      - name: init-container
-        image: "{{ .Values.image.longhorn.engine }}:{{ .Values.image.longhorn.engineTag }}"
-        command: ['sh', '-c', 'cp /usr/local/bin/* /data/']
-        volumeMounts:
-        - name: execbin
-          mountPath: /data/
       containers:
       - name: longhorn-manager
-        image: "{{ .Values.image.longhorn.manager }}:{{ .Values.image.longhorn.managerTag }}"
-        imagePullPolicy: Always
+        image: {{ template "registry_url" . }}{{ .Values.image.longhorn.manager.repository }}:{{ .Values.image.longhorn.manager.tag }}
+        imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
         command:
@@ -29,25 +29,33 @@ spec:
         - -d
         - daemon
         - --engine-image
-        - "{{ .Values.image.longhorn.engine }}:{{ .Values.image.longhorn.engineTag }}"
+        - "{{ template "registry_url" . }}{{ .Values.image.longhorn.engine.repository }}:{{ .Values.image.longhorn.engine.tag }}"
+        - --instance-manager-image
+        - "{{ template "registry_url" . }}{{ .Values.image.longhorn.instanceManager.repository }}:{{ .Values.image.longhorn.instanceManager.tag }}"
+        - --share-manager-image
+        - "{{ template "registry_url" . }}{{ .Values.image.longhorn.shareManager.repository }}:{{ .Values.image.longhorn.shareManager.tag }}"
+        - --backing-image-manager-image
+        - "{{ template "registry_url" . }}{{ .Values.image.longhorn.backingImageManager.repository }}:{{ .Values.image.longhorn.backingImageManager.tag }}"
         - --manager-image
-        - "{{ .Values.image.longhorn.manager }}:{{ .Values.image.longhorn.managerTag }}"
+        - "{{ template "registry_url" . }}{{ .Values.image.longhorn.manager.repository }}:{{ .Values.image.longhorn.manager.tag }}"
         - --service-account
         - longhorn-service-account
         ports:
         - containerPort: 9500
           name: manager
+        readinessProbe:
+          tcpSocket:
+            port: 9500
         volumeMounts:
         - name: dev
           mountPath: /host/dev/
         - name: proc
           mountPath: /host/proc/
-        - name: varrun
-          mountPath: /var/run/
         - name: longhorn
-          mountPath: /var/lib/rancher/longhorn/
-        - name: execbin
-          mountPath: /usr/local/bin/
+          mountPath: /var/lib/longhorn/
+          mountPropagation: Bidirectional
+        - name: longhorn-default-setting
+          mountPath: /var/lib/longhorn-setting/
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -61,8 +69,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: LONGHORN_BACKEND_SVC
-          value: longhorn-backend
+        - name: DEFAULT_SETTING_PATH
+          value: /var/lib/longhorn-setting/default-setting.yaml
       volumes:
       - name: dev
         hostPath:
@@ -70,23 +78,39 @@ spec:
       - name: proc
         hostPath:
           path: /proc/
-      - name: varrun
-        hostPath:
-          path: /var/run/
       - name: longhorn
         hostPath:
-          path: /var/lib/rancher/longhorn/
-      - name: execbin
-        emptyDir: {}
+          path: /var/lib/longhorn/
+      - name: longhorn-default-setting
+        configMap:
+          name: longhorn-default-setting
+      {{- if .Values.privateRegistry.registrySecret }}
+      imagePullSecrets:
+      - name: {{ .Values.privateRegistry.registrySecret }}
+      {{- end }}
+      {{- if .Values.longhornManager.priorityClass }}
+      priorityClassName: {{ .Values.longhornManager.priorityClass | quote}}
+      {{- end }}
       serviceAccountName: longhorn-service-account
+      {{- if .Values.longhornManager.tolerations }}
+      tolerations:
+{{ toYaml .Values.longhornManager.tolerations | indent 6 }}
+      {{- end }}
+      {{- if .Values.longhornManager.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.longhornManager.nodeSelector | indent 8 }}
+      {{- end }}
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: "100%"
 ---
-kind: Service
 apiVersion: v1
+kind: Service
 metadata:
-  labels:
+  labels: {{- include "longhorn.labels" . | nindent 4 }}
     app: longhorn-manager
   name: longhorn-backend
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "release_namespace" . }}
 spec:
   type: {{ .Values.service.manager.type }}
   sessionAffinity: ClientIP

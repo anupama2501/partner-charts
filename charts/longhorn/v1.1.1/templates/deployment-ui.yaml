@@ -1,42 +1,72 @@
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  labels:
-    app: {{ .Release.Name }}-ui
+  labels: {{- include "longhorn.labels" . | nindent 4 }}
+    app: longhorn-ui
   name: longhorn-ui
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "release_namespace" . }}
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: longhorn-ui
   template:
     metadata:
-      labels:
-        app: {{ .Release.Name }}-ui
+      labels: {{- include "longhorn.labels" . | nindent 8 }}
+        app: longhorn-ui
     spec:
       containers:
       - name: longhorn-ui
-        image: "{{ .Values.image.longhorn.ui }}:{{ .Values.image.longhorn.uiTag }}"
+        image: {{ template "registry_url" . }}{{ .Values.image.longhorn.ui.repository }}:{{ .Values.image.longhorn.ui.tag }}
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
         ports:
         - containerPort: 8000
-          name: longhorn-ui
+          name: http
         env:
           - name: LONGHORN_MANAGER_IP
             value: "http://longhorn-backend:9500"
+      {{- if .Values.privateRegistry.registrySecret }}
+      imagePullSecrets:
+      - name: {{ .Values.privateRegistry.registrySecret }}
+      {{- end }}
+      {{- if .Values.longhornUI.priorityClass }}
+      priorityClassName: {{ .Values.longhornUI.priorityClass | quote}}
+      {{- end }}
+      {{- if .Values.longhornUI.tolerations }}
+      tolerations:
+{{ toYaml .Values.longhornManager.tolerations | indent 6 }}
+      {{- end }}
+      {{- if .Values.longhornUI.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.longhornManager.nodeSelector | indent 8 }}
+      {{- end }}
 ---
 kind: Service
 apiVersion: v1
 metadata:
-  labels:
-    app: {{ .Release.Name }}-ui
+  labels: {{- include "longhorn.labels" . | nindent 4 }}
+    app: longhorn-ui
+    {{- if eq .Values.service.ui.type "Rancher-Proxy" }}
+    kubernetes.io/cluster-service: "true"
+    {{- end }}
   name: longhorn-frontend
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "release_namespace" . }}
 spec:
+  {{- if eq .Values.service.ui.type "Rancher-Proxy" }}
+  type: ClusterIP
+  {{- else }}
   type: {{ .Values.service.ui.type }}
+  {{- end }}
   selector:
-    app: {{ .Release.Name }}-ui
+    app: longhorn-ui
   ports:
-  - name: longhorn-ui
+  - name: http
     port: 80
-    targetPort: longhorn-ui
+    targetPort: http
     {{- if .Values.service.ui.nodePort }}
     nodePort: {{ .Values.service.ui.nodePort }}
+    {{- else }}
+    nodePort: null
     {{- end }}
